@@ -65,7 +65,10 @@ def send_telegram(message: str) -> None:
         response = requests.post(url, json=payload, timeout=30)
         response.raise_for_status()
     except requests.RequestException as exc:
-        print(f"Error: failed to send Telegram message: {exc}", file=sys.stderr)
+        # The exception message embeds the request URL, which contains the
+        # bot token; mask it before writing to the journal.
+        safe = str(exc).replace(token, "***")
+        print(f"Error: failed to send Telegram message: {safe}", file=sys.stderr)
         raise SystemExit(1)
 
 
