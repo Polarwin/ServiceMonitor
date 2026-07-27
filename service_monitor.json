@@ -1,0 +1,7 @@
+{
+ "services": {
+  "stockticker-web.service": {"enabled": true},
+  "valenciaguard.service": {"enabled": true},
+  "ytwatcher.service": {"enabled": false}
+ }
+}

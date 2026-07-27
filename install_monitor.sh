@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# Install the stockticker-monitor systemd service: a root watchdog that
-# discovers our own project services (enabled units running something under
-# /home/justin), restarts them when they crash or degrade (file-descriptor
-# exhaustion, fatal journal errors), and reports every action to Telegram.
+# Install the service-monitor systemd service: a root watchdog that
+# monitors the services listed in service_monitor.json (or, without that
+# file, discovers enabled units running something under /home/justin),
+# restarts them when they crash or degrade (file-descriptor exhaustion,
+# fatal journal errors), and reports every action to Telegram.
 set -euo pipefail
 
-SERVICE_NAME="stockticker-monitor"
+SERVICE_NAME="service-monitor"
+OLD_SERVICE_NAME="stockticker-monitor"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 
 # Resolve the project directory from the script location so it works when run
@@ -34,6 +36,14 @@ WantedBy=multi-user.target
 EOF
 
 sudo systemctl daemon-reload
+
+# Migrate from the old unit name: stop/disable and remove it if present.
+if systemctl cat "${OLD_SERVICE_NAME}.service" >/dev/null 2>&1; then
+    echo "Removing old ${OLD_SERVICE_NAME} unit..."
+    sudo systemctl disable --now "${OLD_SERVICE_NAME}" 2>/dev/null || true
+    sudo rm -f "/etc/systemd/system/${OLD_SERVICE_NAME}.service"
+    sudo systemctl daemon-reload
+fi
 
 # Idempotent start/restart: enable & start if not running, otherwise restart
 # so the updated unit file takes effect.

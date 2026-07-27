@@ -1,9 +1,14 @@
 """Watchdog for our own systemd services.
 
-Discovers enabled services whose WorkingDirectory or ExecStart points into
-/home/justin (i.e. the projects we deploy ourselves) and, every
-CHECK_INTERVAL_SECONDS, looks for the failure modes systemd itself cannot
-see:
+Monitored services come from service_monitor.json next to this script when
+it exists ({"services": {"name.service": {"enabled": true/false}, ...}} —
+a plain true/false also works). Services listed with "enabled": false are
+skipped. When the file is missing, falls back to auto-discovery: enabled
+services whose WorkingDirectory or ExecStart points into /home/justin
+(i.e. the projects we deploy ourselves).
+
+Every CHECK_INTERVAL_SECONDS the watchdog looks for the failure modes
+systemd itself cannot see:
 
 - the unit is enabled but no longer active (gave up after StartLimitBurst,
   or was never restarted),
@@ -73,10 +78,11 @@ def send_telegram(message: str) -> None:
 
 
 HOME_PREFIX = "/home/justin"
-SELF_UNIT = "stockticker-monitor.service"
+SELF_UNIT = "service-monitor.service"
 CHECK_INTERVAL_SECONDS = 60
 DISCOVERY_TTL_SECONDS = 900
 STATE_PATH = Path(__file__).with_name("monitor_state.json")
+CONFIG_PATH = Path(__file__).with_name("service_monitor.json")
 
 # Restart when the main process holds at least this fraction of LimitNOFILE.
 FD_RESTART_FRACTION = 0.8
@@ -97,6 +103,33 @@ def run(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         args, capture_output=True, text=True, timeout=30, check=False
     )
+
+
+def configured_services() -> list[str] | None:
+    """Services from service_monitor.json, or None if absent/unparseable.
+
+    Values may be a bool or {"enabled": bool}; missing "enabled" means true.
+    """
+    try:
+        config = json.loads(CONFIG_PATH.read_text())
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as exc:
+        print(
+            f"Warning: could not parse {CONFIG_PATH} ({exc}); "
+            "falling back to auto-discovery",
+            file=sys.stderr,
+        )
+        return None
+    services = config.get("services", {})
+    found = []
+    for name, entry in services.items():
+        if name == SELF_UNIT:
+            continue
+        enabled = entry if isinstance(entry, bool) else entry.get("enabled", True)
+        if enabled:
+            found.append(name)
+    return sorted(found)
 
 
 def discover_services() -> list[str]:
@@ -249,7 +282,15 @@ def main() -> None:
     services: list[str] = []
     while True:
         now = time.time()
-        if now - discovered_at > DISCOVERY_TTL_SECONDS:
+        # The config file is re-read every cycle so edits take effect
+        # within CHECK_INTERVAL_SECONDS; auto-discovery runs on a TTL.
+        configured = configured_services()
+        if configured is not None:
+            if configured != services:
+                print(f"Monitoring: {', '.join(configured) or '(none enabled)'}", flush=True)
+            services = configured
+            discovered_at = now
+        elif now - discovered_at > DISCOVERY_TTL_SECONDS:
             try:
                 services = discover_services()
                 discovered_at = now
